@@ -1,11 +1,11 @@
-/* ============ Brick Calico app ============ */
+/* ============ Brick model viewer (generic) ============ */
 const COLORS = MODEL.colors;
 const { W, D, H } = MODEL.grid;
 const S = 8, SH = 9.6, GAP = 0.4;
 const LAYERS = MODEL.layers;                 // sorted bottom-up
-const N_STEPS = LAYERS.length;
 const ALL = [];
 LAYERS.forEach(L => L.bricks.forEach(b => ALL.push({ ...b, y: L.y })));
+const EXT = Math.max(W * S, D * S, H * SH);  // model extent, drives camera + lights
 
 /* build order: within each layer, serpentine front-to-back, ~3-5 bricks per step */
 const STEPS = []; // { bricks, layer }
@@ -35,8 +35,8 @@ ALL.forEach(b => colorCount[b.c] = (colorCount[b.c] || 0) + 1);
 document.getElementById('facts').innerHTML = [
   `<span class="fact"><b>${ALL.length}</b> pieces</span>`,
   `<span class="fact"><b>${STEPS.length}</b> steps</span>`,
-  `<span class="fact"><b>25&nbsp;cm</b> tall — life size</span>`,
-  `<span class="fact">footprint <b>17.6 × 19.2&nbsp;cm</b></span>`,
+  `<span class="fact"><b>${(H * 0.96).toFixed(0)}&nbsp;cm</b> tall${MODEL.meta.tallNote ? ' — ' + MODEL.meta.tallNote : ''}</span>`,
+  `<span class="fact">footprint <b>${(W * 0.8).toFixed(1)} × ${(D * 0.8).toFixed(1)}&nbsp;cm</b></span>`,
 ].join('');
 document.getElementById('legend').innerHTML =
   Object.entries(COLORS).map(([k, c]) =>
@@ -84,27 +84,37 @@ function brickEdgePts(b, out) {
   const hw = (b.w * S - GAP) / 2, hh = (SH - GAP) / 2, hd = (b.d * S - GAP) / 2;
   const cx = wx(b), cy = b.y * SH + hh, cz = wz(b);
   const c = [-1, 1];
-  // 12 box edges
   for (const sy of c) for (const sz of c) out.push(cx - hw, cy + sy * hh, cz + sz * hd, cx + hw, cy + sy * hh, cz + sz * hd);
   for (const sx of c) for (const sz of c) out.push(cx + sx * hw, cy - hh, cz + sz * hd, cx + sx * hw, cy + hh, cz + sz * hd);
   for (const sx of c) for (const sy of c) out.push(cx + sx * hw, cy + sy * hh, cz - hd, cx + sx * hw, cy + sy * hh, cz + hd);
 }
 
 const materials = {};
+const isDarkColor = {};
 for (const [k, c] of Object.entries(COLORS)) {
   materials[k] = new THREE.MeshPhongMaterial({
     color: new THREE.Color(c.hex).convertSRGBToLinear(),
     shininess: 48, specular: new THREE.Color(0x3a3a3a),
   });
+  const n = parseInt(c.hex.slice(1), 16);
+  const lum = 0.2126 * (n >> 16) + 0.7152 * ((n >> 8) & 255) + 0.0722 * (n & 255);
+  isDarkColor[k] = lum < 80; // dark bricks get light edge lines so shape stays readable
+}
+
+function linesFrom(pts, color, opacity) {
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(pts), 3));
+  return new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color, transparent: true, opacity }));
 }
 
 function buildGroup(bricks, highlightSet) {
   const group = new THREE.Group();
   const byColor = {};
-  const edgePts = [], hiPts = [];
+  const edgeDark = [], edgeLight = [], hiPts = [];
   for (const b of bricks) {
     (byColor[b.c] = byColor[b.c] || []).push(brickGeo(b).clone());
-    brickEdgePts(b, highlightSet && highlightSet.has(b) ? hiPts : edgePts);
+    if (highlightSet && highlightSet.has(b)) brickEdgePts(b, hiPts);
+    else brickEdgePts(b, isDarkColor[b.c] ? edgeLight : edgeDark);
   }
   for (const [k, geoms] of Object.entries(byColor)) {
     const mesh = new THREE.Mesh(mergeGeoms(geoms), materials[k]);
@@ -112,18 +122,10 @@ function buildGroup(bricks, highlightSet) {
     mesh.receiveShadow = true;
     group.add(mesh);
   }
-  if (edgePts.length) {
-    const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(edgePts), 3));
-    group.add(new THREE.LineSegments(g, new THREE.LineBasicMaterial({
-      color: 0x0c1118, transparent: true, opacity: 0.28,
-    })));
-  }
+  if (edgeDark.length) group.add(linesFrom(edgeDark, 0x0c1118, 0.28));
+  if (edgeLight.length) group.add(linesFrom(edgeLight, 0x9aa6b5, 0.30));
   if (hiPts.length) {
-    const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(hiPts), 3));
-    const m = new THREE.LineBasicMaterial({ color: 0xffb400, transparent: true, opacity: 0.95 });
-    const ls = new THREE.LineSegments(g, m);
+    const ls = linesFrom(hiPts, 0xffb400, 0.95);
     ls.renderOrder = 2;
     group.add(ls);
   }
@@ -139,23 +141,23 @@ function makeView(canvas, opts) {
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
   const scene = new THREE.Scene();
-  const camera = new THREE.PerspectiveCamera(32, 1, 10, 4000);
+  const camera = new THREE.PerspectiveCamera(32, 1, 10, EXT * 16);
 
   scene.add(new THREE.HemisphereLight(0xffffff, 0x8a8a8a, 0.75));
   const key = new THREE.DirectionalLight(0xffffff, 0.7);
-  key.position.set(120, 260, 160);
+  key.position.set(EXT * 0.5, EXT * 1.05, EXT * 0.65);
   key.castShadow = true;
   key.shadow.mapSize.set(2048, 2048);
   const sc = key.shadow.camera;
-  sc.left = -240; sc.right = 240; sc.top = 260; sc.bottom = -60;
-  sc.near = 10; sc.far = 900;
+  sc.left = -EXT; sc.right = EXT; sc.top = EXT * 1.1; sc.bottom = -EXT * 0.3;
+  sc.near = 10; sc.far = EXT * 3.6;
   scene.add(key);
   const fill = new THREE.DirectionalLight(0xffffff, 0.22);
-  fill.position.set(-160, 120, -120);
+  fill.position.set(-EXT * 0.65, EXT * 0.5, -EXT * 0.5);
   scene.add(fill);
 
   const ground = new THREE.Mesh(
-    new THREE.PlaneGeometry(1400, 1400),
+    new THREE.PlaneGeometry(EXT * 6, EXT * 6),
     new THREE.ShadowMaterial({ opacity: 0.17 })
   );
   ground.rotation.x = -Math.PI / 2;
@@ -163,8 +165,8 @@ function makeView(canvas, opts) {
   scene.add(ground);
 
   let content = null;
-  const target = new THREE.Vector3(0, 105, 0);
-  const st = { theta: opts.theta, phi: opts.phi, dist: opts.dist, auto: opts.auto && !reduceMotion };
+  const target = new THREE.Vector3(0, H * SH * 0.45, 0);
+  const st = { theta: opts.theta, phi: opts.phi, dist: EXT * opts.dist, auto: opts.auto && !reduceMotion };
 
   function applyCam() {
     camera.position.set(
@@ -185,6 +187,7 @@ function makeView(canvas, opts) {
   }
 
   /* pointer orbit + pinch zoom */
+  const zoomLo = EXT * 1.0, zoomHi = EXT * 4.6;
   const pointers = new Map();
   let pinchD = 0;
   canvas.addEventListener('pointerdown', e => {
@@ -208,7 +211,7 @@ function makeView(canvas, opts) {
       const p = [...pointers.values()];
       const d = Math.hypot(p[0][0] - p[1][0], p[0][1] - p[1][1]);
       if (pinchD) {
-        st.dist = Math.min(1100, Math.max(240, st.dist * pinchD / d));
+        st.dist = Math.min(zoomHi, Math.max(zoomLo, st.dist * pinchD / d));
         render();
       }
       pinchD = d;
@@ -220,7 +223,7 @@ function makeView(canvas, opts) {
   canvas.addEventListener('wheel', e => {
     e.preventDefault();
     st.auto = false;
-    st.dist = Math.min(1100, Math.max(240, st.dist * (1 + e.deltaY * 0.0012)));
+    st.dist = Math.min(zoomHi, Math.max(zoomLo, st.dist * (1 + e.deltaY * 0.0012)));
     render();
   }, { passive: false });
 
@@ -245,7 +248,7 @@ function makeView(canvas, opts) {
 
 /* ---------- model view ---------- */
 const modelView = makeView(document.getElementById('cv-model'),
-  { theta: 0.55, phi: 1.12, dist: 620, auto: true });
+  { theta: 0.55, phi: 1.12, dist: 2.5, auto: true });
 modelView.setContent(buildGroup(ALL));
 (function loop() { modelView.tick(); requestAnimationFrame(loop); })();
 
@@ -280,9 +283,8 @@ function brickIcon(w, d, hex, px) {
   ctx.lineWidth = 1;
   ctx.lineJoin = 'round';
   face([P(0, Hm, 0), P(Wm, Hm, 0), P(Wm, Hm, Dm), P(0, Hm, Dm)], shade(hex, 0.22));   // top
-  face([P(0, 0, Dm), P(Wm, 0, Dm), P(Wm, Hm, Dm), P(0, Hm, Dm)], hex);                 // front (z=D)
-  face([P(Wm, 0, 0), P(Wm, 0, Dm), P(Wm, Hm, Dm), P(Wm, Hm, 0)], shade(hex, -0.18));   // right (x=W)
-  // studs back-to-front
+  face([P(0, 0, Dm), P(Wm, 0, Dm), P(Wm, Hm, Dm), P(0, Hm, Dm)], hex);                 // front
+  face([P(Wm, 0, 0), P(Wm, 0, Dm), P(Wm, Hm, Dm), P(Wm, Hm, 0)], shade(hex, -0.18));   // right
   const studs = [];
   for (let i = 0; i < w; i++) for (let j = 0; j < d; j++) studs.push([(i + 0.5) * 8, (j + 0.5) * 8]);
   studs.sort((a, b) => (a[0] + a[1]) - (b[0] + b[1]));
@@ -301,7 +303,7 @@ function brickIcon(w, d, hex, px) {
 
 /* ---------- instructions ---------- */
 const buildView = makeView(document.getElementById('cv-build'),
-  { theta: 0.62, phi: 1.02, dist: 640, auto: false });
+  { theta: 0.62, phi: 1.02, dist: 2.6, auto: false });
 let step = 1;
 const scrub = document.getElementById('scrub');
 scrub.max = STEPS.length;
@@ -353,7 +355,8 @@ setStep(1);
 
 /* ---------- parts inventory ---------- */
 (function inventory() {
-  const groups = { w: new Map(), o: new Map(), k: new Map(), g: new Map(), p: new Map() };
+  const groups = {};
+  Object.keys(COLORS).forEach(k => groups[k] = new Map());
   for (const b of ALL) {
     const a = Math.min(b.w, b.d), z = Math.max(b.w, b.d);
     const key = a + 'x' + z;

@@ -1,39 +1,61 @@
-# Brick Calico
+# Brick Models
 
-A life-size LEGO-style calico cat — an interactive 3D model with LEGO-manual-style
-building instructions, generated entirely from code.
+Generate LEGO-style brick sculptures from code: each model is a small spec file that
+sculpts a shape from geometric primitives; the pipeline voxelizes it, merges voxels
+into standard bricks, verifies buildability, and emits a single-file interactive page —
+orbitable 3D model, LEGO-manual-style step-by-step instructions (3–5 bricks per step),
+and a full parts inventory.
 
-- **560 bricks**, standard 1×1 through 2×6 sizes, 25 layers
-- **132 build steps**, 3–5 bricks each, with per-step parts callouts
-- True house-cat scale: 1 stud = 8 mm → ~25 cm tall, 17.6 × 19.2 cm footprint
-- Calico coloring: white base, bright-orange and black patches, lime eyes, pink nose
+## Models
 
-## Files
+| Model | Spec | Bricks | Description |
+| --- | --- | --- | --- |
+| Brick Calico | `models/calico-cat.js` | 566 | Life-size sitting calico house cat |
+| Brick Shadow | `models/black-cat.js` | 350 | Life-size black cat sitting bolt upright, green eyes |
 
-| File | Purpose |
-| --- | --- |
-| `generate.js` | Model generator: voxelizes a sitting cat from geometric primitives (ellipsoids, capsules, a bezier tail), paints calico patches in 3D space, greedy-merges each layer into standard bricks, and verifies stud connectivity. Prints ASCII previews. Outputs `cat-model.json`. |
-| `cat-model.json` | The generated model: brick list per layer with sizes and colors. |
-| `page.html.part` | Page shell: markup + CSS (light/dark themed). |
-| `app.js` | Viewer app: three.js scene building, orbit controls, step engine, isometric 2D part icons, parts inventory. |
-| `brick-calico.html` | The assembled single-file page (three.js inlined). Open in any browser. |
-
-## Rebuild
+## Build
 
 ```sh
-node generate.js                 # regenerate cat-model.json (prints previews + stats)
-./build.sh                       # reassemble brick-calico.html
+./build.sh models/black-cat.js            # → dist/black-cat.json + dist/black-cat.html
+./build.sh models/black-cat.js --preview  # also print ASCII silhouettes
 ```
 
-`build.sh` downloads `three.min.js` (r128) on first run.
+Open `dist/<slug>.html` in any browser. `build.sh` downloads `three.min.js` (r128) on first run.
 
-## Tweaking the cat
+## Pipeline
 
-Everything about the cat lives in `generate.js`:
+```
+models/<spec>.js ──► generate.js ──► dist/<slug>.json ──► assemble.js ──► dist/<slug>.html
+                     voxelize            bricks/layers        viewer/page.html.part
+                     merge → bricks                           viewer/app.js + three.js
+                     connectivity check
+```
 
-- **Pose/shape** — the primitives in `inCat()` (haunches, torso, chest, head, ears, legs, paws, tail bezier `TP`).
-- **Coat** — the patch spheres/ellipsoids in `catColor()`; black is checked before orange.
-- **Size** — the grid constants `W, D, H` and the primitive coordinates (all in mm).
+- **Scale**: 1 stud = 8 mm, 1 brick height = 9.6 mm (real LEGO dimensions).
+- **Merge**: per layer, greedy largest-first from standard sizes (1×1 … 2×6), alternating
+  x/z bias between layers for interlock. The merge is *support-aware*: cells with no voxel
+  beneath them are first covered by bricks that also grab a supported cell, so steep walls
+  and overhangs stay stud-connected instead of floating.
+- **Verification**: BFS over stud connections from the ground; anything unreachable is
+  dropped and reported. A finished model prints `dropped (unconnected): 0`.
 
-The generator drops any brick that doesn't connect to the ground through stud overlaps,
-so whatever you sculpt stays buildable.
+## Writing a new model spec
+
+A spec is a JS module (see `models/` for two complete examples):
+
+```js
+const S = require('../lib/shapes');
+module.exports = {
+  meta: { slug, title, subtitle, tallNote, favicon, footer },
+  grid: { W, D, H },          // studs wide/deep, layers tall
+  colors: { k: { hex, name }, ... },
+  inShape(p)  { ... },        // p in mm, origin at ground center, y up — true if solid
+  colorAt(p)  { ... },        // color key for a solid point
+};
+```
+
+`lib/shapes.js` provides `ellipsoid`, `sphere`, `capsule` (tapered), `cone` (elliptical,
+for ears), `bezierTube` (tails — its `.at(p)` returns the curve parameter, handy for
+coloring sections), and `box`. Sculpt with a handful of primitives, run with `--preview`,
+and iterate on the ASCII silhouettes until the shape reads well. Details like eyes are
+small spheres checked first in `colorAt`.

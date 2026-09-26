@@ -1,25 +1,19 @@
 #!/bin/sh
-# Assemble brick-calico.html from page shell + three.js + model data + app code
+# Generate + assemble a brick model page from a spec.
+#   ./build.sh models/calico-cat.js [--preview]
 set -e
 cd "$(dirname "$0")"
+
+if [ -z "$1" ]; then
+  echo "usage: ./build.sh models/<spec>.js [--preview]"
+  exit 1
+fi
 
 if [ ! -f three.min.js ]; then
   echo "downloading three.js r128..."
   curl -sL -o three.min.js https://unpkg.com/three@0.128.0/build/three.min.js
 fi
 
-{
-  cat page.html.part
-  echo '<script>'
-  cat three.min.js
-  echo
-  echo '</script>'
-  echo '<script>'
-  printf 'const MODEL='
-  cat cat-model.json
-  echo ';'
-  cat app.js
-  echo '</script>'
-} > brick-calico.html
-
-echo "wrote brick-calico.html ($(wc -c < brick-calico.html | tr -d ' ') bytes)"
+node generate.js "$1" "$2"
+SLUG=$(node -p "require('./$1').meta.slug")
+node assemble.js "dist/$SLUG.json"
