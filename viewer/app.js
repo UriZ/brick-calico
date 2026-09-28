@@ -1,10 +1,11 @@
 /* ============ Brick model viewer (generic) ============ */
 const COLORS = MODEL.colors;
 const { W, D, H } = MODEL.grid;
-const S = 8, SH = 9.6, GAP = 0.4;
+const S = 8, SH = 9.6, GAP = 0.4, CAPH = 3.0;
 const LAYERS = MODEL.layers;                 // sorted bottom-up
 const ALL = [];
 LAYERS.forEach(L => L.bricks.forEach(b => ALL.push({ ...b, y: L.y })));
+const TILES = ALL.reduce((s, b) => s + (b.caps ? b.caps.length : 0), 0);
 const EXT = Math.max(W * S, D * S, H * SH);  // model extent, drives camera + lights
 
 /* build order: within each layer, serpentine front-to-back, ~3-5 bricks per step */
@@ -31,9 +32,11 @@ const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 /* ---------- facts + legend ---------- */
 const colorCount = {};
-ALL.forEach(b => colorCount[b.c] = (colorCount[b.c] || 0) + 1);
+ALL.forEach(b => {
+  colorCount[b.c] = (colorCount[b.c] || 0) + 1 + (b.caps ? b.caps.length : 0);
+});
 document.getElementById('facts').innerHTML = [
-  `<span class="fact"><b>${ALL.length}</b> pieces</span>`,
+  `<span class="fact"><b>${ALL.length + TILES}</b> pieces</span>`,
   `<span class="fact"><b>${STEPS.length}</b> steps</span>`,
   `<span class="fact"><b>${(H * 0.96).toFixed(0)}&nbsp;cm</b> tall${MODEL.meta.tallNote ? ' — ' + MODEL.meta.tallNote : ''}</span>`,
   `<span class="fact">footprint <b>${(W * 0.8).toFixed(1)} × ${(D * 0.8).toFixed(1)}&nbsp;cm</b></span>`,
@@ -63,26 +66,86 @@ function mergeGeoms(geoms) {
 const wx = b => (b.x + b.w / 2 - W / 2) * S;
 const wz = b => (b.z + b.d / 2 - D / 2) * S;
 
+// wedge sloping down toward +z, centered at origin, sitting on y=0
+function wedgeGeo(wm, dm, h) {
+  const hw = wm / 2, hd = dm / 2;
+  const v = (a, b, c) => [a, b, c];
+  const b0 = v(-hw, 0, -hd), b1 = v(hw, 0, -hd), b2 = v(hw, 0, hd), b3 = v(-hw, 0, hd);
+  const t0 = v(-hw, h, -hd), t1 = v(hw, h, -hd);
+  const tris = [
+    b0, b2, b1, b0, b3, b2,        // bottom
+    b0, b1, t1, b0, t1, t0,        // back (z-)
+    t0, t1, b2, t0, b2, b3,        // slope
+    b0, t0, b3,                    // left side
+    b1, b2, t1,                    // right side
+  ];
+  const pos = new Float32Array(tris.flat());
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.computeVertexNormals();
+  return g;
+}
+const DIR_ROT = { S: 0, E: Math.PI / 2, N: Math.PI, W: -Math.PI / 2 };
+
 const brickGeoCache = new Map();
 function brickGeo(b) {
-  const key = b.x + ',' + b.y + ',' + b.z + ',' + b.w + ',' + b.d;
+  const key = [b.x, b.y, b.z, b.w, b.d, b.k || 'b', b.dir || '', JSON.stringify(b.caps || 0)].join(',');
   if (brickGeoCache.has(key)) return brickGeoCache.get(key);
   const geoms = [];
-  const box = new THREE.BoxGeometry(b.w * S - GAP, SH - GAP, b.d * S - GAP).toNonIndexed();
-  box.translate(wx(b), b.y * SH + (SH - GAP) / 2, wz(b));
-  geoms.push(box);
-  for (let i = 0; i < b.w; i++) for (let j = 0; j < b.d; j++) {
-    const st = new THREE.CylinderGeometry(2.4, 2.4, 1.8, 12).toNonIndexed();
-    st.translate((b.x + i + 0.5 - W / 2) * S, b.y * SH + SH - GAP + 0.9, (b.z + j + 0.5 - D / 2) * S);
-    geoms.push(st);
+  if (b.k === 's') {
+    // slope: wedge is square along the facing direction (depth), runs across
+    const alongX = b.dir === 'S' || b.dir === 'N'; // width axis when facing z
+    const wm = (alongX ? b.w : b.d) * S - GAP;     // run length
+    const g = wedgeGeo(wm, S - GAP, SH - GAP);
+    g.rotateY(DIR_ROT[b.dir]);
+    g.translate(wx(b), b.y * SH, wz(b));
+    geoms.push(g);
+  } else {
+    const box = new THREE.BoxGeometry(b.w * S - GAP, SH - GAP, b.d * S - GAP).toNonIndexed();
+    box.translate(wx(b), b.y * SH + (SH - GAP) / 2, wz(b));
+    geoms.push(box);
+    // tile caps on exposed cells; studs only where another brick will sit
+    const capped = new Set();
+    (b.caps || []).forEach(([cx, cz, cw, cd]) => {
+      for (let i = 0; i < cw; i++) for (let j = 0; j < cd; j++) capped.add((cx + i) + ',' + (cz + j));
+      const cap = new THREE.BoxGeometry(cw * S - GAP, CAPH, cd * S - GAP).toNonIndexed();
+      cap.translate((cx + cw / 2 - W / 2) * S, b.y * SH + SH - GAP + CAPH / 2, (cz + cd / 2 - D / 2) * S);
+      geoms.push(cap);
+    });
+    for (let i = 0; i < b.w; i++) for (let j = 0; j < b.d; j++) {
+      if (capped.has((b.x + i) + ',' + (b.z + j))) continue;
+      const st = new THREE.CylinderGeometry(2.4, 2.4, 1.8, 12).toNonIndexed();
+      st.translate((b.x + i + 0.5 - W / 2) * S, b.y * SH + SH - GAP + 0.9, (b.z + j + 0.5 - D / 2) * S);
+      geoms.push(st);
+    }
   }
   const g = mergeGeoms(geoms);
   brickGeoCache.set(key, g);
   return g;
 }
 function brickEdgePts(b, out) {
-  const hw = (b.w * S - GAP) / 2, hh = (SH - GAP) / 2, hd = (b.d * S - GAP) / 2;
+  const hh = (SH - GAP) / 2;
   const cx = wx(b), cy = b.y * SH + hh, cz = wz(b);
+  if (b.k === 's') {
+    // wedge edges in local frame (down toward +z), then rotate
+    const alongX = b.dir === 'S' || b.dir === 'N';
+    const hw = ((alongX ? b.w : b.d) * S - GAP) / 2, hd = (S - GAP) / 2, h = SH - GAP;
+    const pts = [
+      [-hw, 0, -hd, hw, 0, -hd], [hw, 0, -hd, hw, 0, hd],
+      [hw, 0, hd, -hw, 0, hd], [-hw, 0, hd, -hw, 0, -hd],
+      [-hw, h, -hd, hw, h, -hd],
+      [-hw, 0, -hd, -hw, h, -hd], [hw, 0, -hd, hw, h, -hd],
+      [-hw, h, -hd, -hw, 0, hd], [hw, h, -hd, hw, 0, hd],
+    ];
+    const rot = DIR_ROT[b.dir], cos = Math.cos(rot), sin = Math.sin(rot);
+    for (const [x1, y1, z1, x2, y2, z2] of pts) {
+      out.push(
+        cx + x1 * cos + z1 * sin, b.y * SH + y1, cz - x1 * sin + z1 * cos,
+        cx + x2 * cos + z2 * sin, b.y * SH + y2, cz - x2 * sin + z2 * cos);
+    }
+    return;
+  }
+  const hw = (b.w * S - GAP) / 2, hd = (b.d * S - GAP) / 2;
   const c = [-1, 1];
   for (const sy of c) for (const sz of c) out.push(cx - hw, cy + sy * hh, cz + sz * hd, cx + hw, cy + sy * hh, cz + sz * hd);
   for (const sx of c) for (const sz of c) out.push(cx + sx * hw, cy - hh, cz + sz * hd, cx + sx * hw, cy + hh, cz + sz * hd);
@@ -252,7 +315,7 @@ const modelView = makeView(document.getElementById('cv-model'),
 modelView.setContent(buildGroup(ALL));
 (function loop() { modelView.tick(); requestAnimationFrame(loop); })();
 
-/* ---------- 2D brick icon ---------- */
+/* ---------- 2D part icons ---------- */
 function shade(hex, f) { // f: -1..1
   const n = parseInt(hex.slice(1), 16);
   let r = n >> 16, g = (n >> 8) & 255, b = n & 255;
@@ -260,10 +323,12 @@ function shade(hex, f) { // f: -1..1
   r = Math.round(r + (t - r) * a); g = Math.round(g + (t - g) * a); b = Math.round(b + (t - b) * a);
   return `rgb(${r},${g},${b})`;
 }
-function brickIcon(w, d, hex, px) {
+// kind: 'b' brick, 's' slope, 't' tile
+function partIcon(w, d, hex, px, kind) {
   const cnv = document.createElement('canvas');
   const dpr = Math.min(devicePixelRatio, 2);
-  const Wm = w * 8, Dm = d * 8, Hm = 9.6, STH = 1.8;
+  const Wm = w * 8, Dm = d * 8;
+  const Hm = kind === 't' ? 3.2 : 9.6, STH = kind === 'b' ? 1.8 : 0;
   const spanX = (Wm + Dm) * 0.866, spanY = (Wm + Dm) * 0.5 + Hm + STH + 1;
   const k = px / Math.max(spanX, spanY * 1.35);
   const cw = Math.ceil(spanX * k) + 8, ch = Math.ceil(spanY * k) + 8;
@@ -282,24 +347,33 @@ function brickIcon(w, d, hex, px) {
   ctx.strokeStyle = dark ? 'rgba(150,160,175,.9)' : shade(hex, -0.55);
   ctx.lineWidth = 1;
   ctx.lineJoin = 'round';
+  if (kind === 's') {
+    // wedge: full-height back (x=0 side), sloping to nothing at x=W
+    face([P(0, Hm, 0), P(Wm, 0, 0), P(Wm, 0, Dm), P(0, Hm, Dm)], shade(hex, 0.14)); // slope face
+    face([P(0, 0, Dm), P(Wm, 0, Dm), P(0, Hm, Dm)], hex);                            // front triangle
+    return cnv;
+  }
   face([P(0, Hm, 0), P(Wm, Hm, 0), P(Wm, Hm, Dm), P(0, Hm, Dm)], shade(hex, 0.22));   // top
   face([P(0, 0, Dm), P(Wm, 0, Dm), P(Wm, Hm, Dm), P(0, Hm, Dm)], hex);                 // front
   face([P(Wm, 0, 0), P(Wm, 0, Dm), P(Wm, Hm, Dm), P(Wm, Hm, 0)], shade(hex, -0.18));   // right
-  const studs = [];
-  for (let i = 0; i < w; i++) for (let j = 0; j < d; j++) studs.push([(i + 0.5) * 8, (j + 0.5) * 8]);
-  studs.sort((a, b) => (a[0] + a[1]) - (b[0] + b[1]));
-  for (const [sx, sz] of studs) {
-    const [bx, by] = P(sx, Hm, sz), [tx, ty] = P(sx, Hm + STH, sz);
-    const rx = 2.55 * k * 0.9, ry = rx * 0.58;
-    ctx.fillStyle = hex;
-    ctx.beginPath(); ctx.ellipse(bx, by, rx, ry, 0, 0, Math.PI); ctx.fill(); ctx.stroke();
-    ctx.fillRect(tx - rx, ty, rx * 2, by - ty);
-    ctx.strokeRect(tx - rx, ty, rx * 2, by - ty);
-    ctx.fillStyle = shade(hex, 0.22);
-    ctx.beginPath(); ctx.ellipse(tx, ty, rx, ry, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  if (kind === 'b') {
+    const studs = [];
+    for (let i = 0; i < w; i++) for (let j = 0; j < d; j++) studs.push([(i + 0.5) * 8, (j + 0.5) * 8]);
+    studs.sort((a, b) => (a[0] + a[1]) - (b[0] + b[1]));
+    for (const [sx, sz] of studs) {
+      const [bx, by] = P(sx, Hm, sz), [tx, ty] = P(sx, Hm + STH, sz);
+      const rx = 2.55 * k * 0.9, ry = rx * 0.58;
+      ctx.fillStyle = hex;
+      ctx.beginPath(); ctx.ellipse(bx, by, rx, ry, 0, 0, Math.PI); ctx.fill(); ctx.stroke();
+      ctx.fillRect(tx - rx, ty, rx * 2, by - ty);
+      ctx.strokeRect(tx - rx, ty, rx * 2, by - ty);
+      ctx.fillStyle = shade(hex, 0.22);
+      ctx.beginPath(); ctx.ellipse(tx, ty, rx, ry, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    }
   }
   return cnv;
 }
+const KIND_LABEL = { b: 'Brick', s: 'Slope', t: 'Tile' };
 
 /* ---------- instructions ---------- */
 const buildView = makeView(document.getElementById('cv-build'),
@@ -308,6 +382,21 @@ let step = 1;
 const scrub = document.getElementById('scrub');
 scrub.max = STEPS.length;
 scrub.addEventListener('input', e => setStep(+e.target.value));
+
+function stepParts(bricks) {
+  // aggregate bricks, slopes, and their tile caps for the callout
+  const agg = new Map();
+  const add = (kind, w, d, c) => {
+    const a = Math.min(w, d), z = Math.max(w, d);
+    const key = kind + '|' + a + 'x' + z + '|' + c;
+    agg.set(key, (agg.get(key) || 0) + 1);
+  };
+  for (const b of bricks) {
+    add(b.k === 's' ? 's' : 'b', b.w, b.d, b.c);
+    (b.caps || []).forEach(([, , w, d]) => add('t', w, d, b.c));
+  }
+  return agg;
+}
 
 function setStep(n) {
   step = Math.min(STEPS.length, Math.max(1, n));
@@ -321,25 +410,18 @@ function setStep(n) {
   document.getElementById('btn-prev').disabled = step === 1;
   document.getElementById('btn-next').disabled = step === STEPS.length;
   scrub.value = step;
-  // parts callout
-  const agg = new Map();
-  for (const b of STEPS[step - 1].bricks) {
-    const a = Math.min(b.w, b.d), z = Math.max(b.w, b.d);
-    const key = a + 'x' + z + '|' + b.c;
-    agg.set(key, (agg.get(key) || 0) + 1);
-  }
   const holder = document.getElementById('stepparts');
   holder.innerHTML = '';
-  [...agg.entries()]
+  [...stepParts(STEPS[step - 1].bricks).entries()]
     .sort((p, q) => q[1] - p[1])
     .forEach(([key, ct]) => {
-      const [sz, c] = key.split('|');
+      const [kind, sz, c] = key.split('|');
       const [a, z] = sz.split('x').map(Number);
       const div = document.createElement('div');
       div.className = 'pm';
-      div.appendChild(brickIcon(z, a, COLORS[c].hex, 46));
+      div.appendChild(partIcon(z, a, COLORS[c].hex, 46, kind));
       const t = document.createElement('div');
-      t.innerHTML = `<div class="ct">${ct}×</div><div class="sz">${a}×${z}</div>`;
+      t.innerHTML = `<div class="ct">${ct}×</div><div class="sz">${kind === 'b' ? '' : KIND_LABEL[kind] + ' '}${a}×${z}</div>`;
       div.appendChild(t);
       holder.appendChild(div);
     });
@@ -357,11 +439,16 @@ setStep(1);
 (function inventory() {
   const groups = {};
   Object.keys(COLORS).forEach(k => groups[k] = new Map());
+  const add = (c, kind, w, d) => {
+    const a = Math.min(w, d), z = Math.max(w, d);
+    const key = kind + '|' + a + 'x' + z;
+    groups[c].set(key, (groups[c].get(key) || 0) + 1);
+  };
   for (const b of ALL) {
-    const a = Math.min(b.w, b.d), z = Math.max(b.w, b.d);
-    const key = a + 'x' + z;
-    groups[b.c].set(key, (groups[b.c].get(key) || 0) + 1);
+    add(b.c, b.k === 's' ? 's' : 'b', b.w, b.d);
+    (b.caps || []).forEach(([, , w, d]) => add(b.c, 't', w, d));
   }
+  const kindOrder = { b: 0, s: 1, t: 2 };
   const holder = document.getElementById('inventory');
   for (const [c, map] of Object.entries(groups)) {
     if (!map.size) continue;
@@ -374,16 +461,19 @@ setStep(1);
     grid.className = 'pgrid';
     [...map.entries()]
       .sort((p, q) => {
-        const [a1, z1] = p[0].split('x').map(Number), [a2, z2] = q[0].split('x').map(Number);
+        const [k1, s1] = p[0].split('|'), [k2, s2] = q[0].split('|');
+        if (k1 !== k2) return kindOrder[k1] - kindOrder[k2];
+        const [a1, z1] = s1.split('x').map(Number), [a2, z2] = s2.split('x').map(Number);
         return (a2 * z2) - (a1 * z1) || z2 - z1;
       })
-      .forEach(([sz, ct]) => {
+      .forEach(([key, ct]) => {
+        const [kind, sz] = key.split('|');
         const [a, z] = sz.split('x').map(Number);
         const card = document.createElement('div');
         card.className = 'pcard';
-        card.appendChild(brickIcon(z, a, COLORS[c].hex, 76));
+        card.appendChild(partIcon(z, a, COLORS[c].hex, 76, kind));
         card.insertAdjacentHTML('beforeend',
-          `<div class="ct">×${ct}</div><div class="nm">Brick ${a}×${z}</div>`);
+          `<div class="ct">×${ct}</div><div class="nm">${KIND_LABEL[kind]} ${a}×${z}</div>`);
         grid.appendChild(card);
       });
     g.appendChild(grid);

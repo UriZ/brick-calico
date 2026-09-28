@@ -76,6 +76,33 @@ function preview() {
 }
 if (showPreview) preview();
 
+/* ---------- slope pass ----------
+   A surface cell becomes a 45° slope facing direction d when: nothing above it,
+   the neighbor toward d on its own layer is empty, and the cell diagonally
+   behind-above (-d, +1) is filled — i.e. the classic stair-step. Requires a
+   voxel below so slopes never carry structure. Corner cells (two candidate
+   directions) stay square. */
+const DIRS = [
+  { dx: 1, dz: 0, name: 'E' }, { dx: -1, dz: 0, name: 'W' },
+  { dx: 0, dz: 1, name: 'S' }, { dx: 0, dz: -1, name: 'N' },
+];
+const slopeDir = Array.from({ length: H }, () =>
+  Array.from({ length: D }, () => new Array(W).fill(null)));
+for (let iy = 0; iy < H; iy++)
+  for (let iz = 0; iz < D; iz++)
+    for (let ix = 0; ix < W; ix++) {
+      if (!get(ix, iy, iz) || get(ix, iy + 1, iz)) continue;
+      if (iy > 0 && !get(ix, iy - 1, iz)) continue;
+      // a neighbor with no support below may need this cell as a same-layer
+      // bridge to reach a stud connection — keep it square in that case
+      const needyNeighbor = iy > 0 && DIRS.some(d =>
+        get(ix + d.dx, iy, iz + d.dz) && !get(ix + d.dx, iy - 1, iz + d.dz));
+      if (needyNeighbor) continue;
+      const cands = DIRS.filter(d =>
+        !get(ix + d.dx, iy, iz + d.dz) && get(ix - d.dx, iy + 1, iz - d.dz));
+      if (cands.length === 1) slopeDir[iy][iz][ix] = cands[0].name;
+    }
+
 /* ---------- merge into bricks ---------- */
 const SIZES = [[2, 6], [2, 4], [2, 3], [2, 2], [1, 6], [1, 4], [1, 3], [1, 2], [1, 1]];
 function orient(sizes, swap) {
@@ -92,6 +119,30 @@ for (let iy = 0; iy < H; iy++) {
   const used = Array.from({ length: D }, () => new Array(W).fill(false));
   const bricks = [];
   const sizes = orient(SIZES, iy % 2 === 1); // alternate x/z bias for interlock
+
+  // merge slope cells first: 1 deep in the facing direction, runs of up to 4
+  // wide along the perpendicular, same color + direction
+  for (let iz = 0; iz < D; iz++) {
+    for (let ix = 0; ix < W; ix++) {
+      const dir = slopeDir[iy][iz][ix];
+      if (!dir || used[iz][ix]) continue;
+      const c = get(ix, iy, iz);
+      const alongX = dir === 'S' || dir === 'N'; // run perpendicular to facing
+      let run = 1;
+      while (run < 4) {
+        const nx = ix + (alongX ? run : 0), nz = iz + (alongX ? 0 : run);
+        if (nx >= W || nz >= D || used[nz][nx]) break;
+        if (slopeDir[iy][nz][nx] !== dir || get(nx, iy, nz) !== c) break;
+        run++;
+      }
+      for (let i = 0; i < run; i++)
+        used[iz + (alongX ? 0 : i)][ix + (alongX ? i : 0)] = true;
+      bricks.push({
+        x: ix, z: iz, w: alongX ? run : 1, d: alongX ? 1 : run, c,
+        k: 's', dir,
+      });
+    }
+  }
   const fits = (ix, iz, w, d, c) => {
     if (ix + w > W || iz + d > D) return false;
     for (let dz = 0; dz < d; dz++)
@@ -183,19 +234,64 @@ allBricks.forEach((b, i) => {
   if (!seen.has(i)) console.log('FLOATING (dropped):', JSON.stringify(b));
 });
 const kept = allBricks.filter((_, i) => seen.has(i));
+
+/* ---------- tile caps: every exposed stud gets a smooth tile ---------- */
+const occ = Array.from({ length: H }, () =>
+  Array.from({ length: D }, () => new Array(W).fill(false)));
+kept.forEach(b => {
+  for (let dz = 0; dz < b.d; dz++)
+    for (let dx = 0; dx < b.w; dx++) occ[b.y][b.z + dz][b.x + dx] = true;
+});
+const covered = (ix, iy, iz) => iy + 1 < H && occ[iy + 1][iz][ix];
+kept.forEach(b => {
+  if (b.k === 's') return; // slopes have no studs
+  // greedy-merge this brick's exposed cells into tile rectangles (rows, then widen)
+  const caps = [];
+  const done = new Set();
+  for (let dz = 0; dz < b.d; dz++)
+    for (let dx = 0; dx < b.w; dx++) {
+      const key = dx + ',' + dz;
+      if (done.has(key) || covered(b.x + dx, b.y, b.z + dz)) continue;
+      let w = 1;
+      while (dx + w < b.w && !done.has((dx + w) + ',' + dz) &&
+             !covered(b.x + dx + w, b.y, b.z + dz)) w++;
+      let d = 1;
+      outer: while (dz + d < b.d) {
+        for (let i = 0; i < w; i++)
+          if (done.has((dx + i) + ',' + (dz + d)) ||
+              covered(b.x + dx + i, b.y, b.z + dz + d)) break outer;
+        d++;
+      }
+      for (let jz = 0; jz < d; jz++)
+        for (let jx = 0; jx < w; jx++) done.add((dx + jx) + ',' + (dz + jz));
+      caps.push([b.x + dx, b.z + dz, w, d]);
+    }
+  if (caps.length) b.caps = caps;
+});
+
 const layerMap = new Map();
 kept.forEach(b => {
   if (!layerMap.has(b.y)) layerMap.set(b.y, { y: b.y, bricks: [] });
-  layerMap.get(b.y).bricks.push({ x: b.x, z: b.z, w: b.w, d: b.d, c: b.c });
+  const { y, ...rest } = b;
+  layerMap.get(b.y).bricks.push(rest);
 });
 layers = [...layerMap.keys()].sort((a, b) => a - b).map(y => layerMap.get(y));
 
 /* ---------- stats & output ---------- */
 const counts = {};
+let tileCount = 0, slopeCount = 0;
 kept.forEach(b => {
-  const key = `${Math.min(b.w, b.d)}x${Math.max(b.w, b.d)} ${spec.colors[b.c].name}`;
+  const kind = b.k === 's' ? 'Slope' : 'Brick';
+  if (b.k === 's') slopeCount++;
+  const key = `${kind} ${Math.min(b.w, b.d)}x${Math.max(b.w, b.d)} ${spec.colors[b.c].name}`;
   counts[key] = (counts[key] || 0) + 1;
+  (b.caps || []).forEach(([, , w, d]) => {
+    tileCount++;
+    const tk = `Tile ${Math.min(w, d)}x${Math.max(w, d)} ${spec.colors[b.c].name}`;
+    counts[tk] = (counts[tk] || 0) + 1;
+  });
 });
+console.log('slopes:', slopeCount, '| tile caps:', tileCount);
 console.log('\n--- ' + spec.meta.title + ' ---');
 console.log('bricks:', kept.length, '| layers:', layers.length,
   '| dropped (unconnected):', allBricks.length - kept.length);

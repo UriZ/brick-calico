@@ -13,7 +13,8 @@ if (!jsonPath) {
 }
 const modelJson = fs.readFileSync(jsonPath, 'utf8');
 const model = JSON.parse(modelJson);
-const pieces = model.layers.reduce((s, L) => s + L.bricks.length, 0);
+const pieces = model.layers.reduce((s, L) =>
+  s + L.bricks.reduce((t, b) => t + 1 + (b.caps ? b.caps.length : 0), 0), 0);
 
 const threePath = path.join(__dirname, 'three.min.js');
 if (!fs.existsSync(threePath)) {
