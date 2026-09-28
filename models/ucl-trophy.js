@@ -11,7 +11,7 @@ const PROFILE = [
   [24, 24], [42, 14], [52, 14],               // short stem
   [62, 20], [110, 40], [160, 55], [205, 64],  // broad bowl to the shoulder
   [232, 58], [252, 38], [272, 39],            // hard waist into the neck
-  [282, 46], [296, 60], [312, 60],            // wide flared mouth
+  [282, 46], [296, 59], [312, 59],            // wide flared mouth
 ];
 function rAt(y) {
   if (y < 0 || y > 312) return -1;
@@ -30,25 +30,33 @@ function inBody(p) {
   return true;
 }
 
-// handle: cubic bezier in the x-y plane, mirrored to both sides
-const HP = [[66, 190], [142, 245], [120, 415], [42, 268]];
+// handle: thin blade with the classic S-curl, two bezier segments in the
+// x-y plane, mirrored to both sides. Segment 1 springs from mid-bowl, sweeps
+// far out and rises well above the rim; segment 2 is the tight inward curl
+// that hooks back down to land on the rim's edge.
+const HSEGS = [
+  [[52, 148], [128, 215], [142, 350], [86, 368]],  // main sweep
+  [[86, 368], [40, 378], [38, 305], [56, 288]],    // top curl into the rim
+];
 const HSAMPLES = [];
-for (let i = 0; i <= 80; i++) {
-  const t = i / 80, u = 1 - t;
-  HSAMPLES.push([
-    u * u * u * HP[0][0] + 3 * u * u * t * HP[1][0] + 3 * u * t * t * HP[2][0] + t * t * t * HP[3][0],
-    u * u * u * HP[0][1] + 3 * u * u * t * HP[1][1] + 3 * u * t * t * HP[2][1] + t * t * t * HP[3][1],
-  ]);
+for (const HP of HSEGS) {
+  for (let i = 0; i <= 60; i++) {
+    const t = i / 60, u = 1 - t;
+    HSAMPLES.push([
+      u * u * u * HP[0][0] + 3 * u * u * t * HP[1][0] + 3 * u * t * t * HP[2][0] + t * t * t * HP[3][0],
+      u * u * u * HP[0][1] + 3 * u * u * t * HP[1][1] + 3 * u * t * t * HP[2][1] + t * t * t * HP[3][1],
+    ]);
+  }
 }
 function inHandle(p) {
-  if (Math.abs(p.z) > 8.5) return false; // 2 studs deep
+  if (Math.abs(p.z) > 8.5) return false; // 2 studs deep — a thin blade
   const ax = Math.abs(p.x);
   let best = 1e9;
   for (const [qx, qy] of HSAMPLES) {
     const d = S.sq(ax - qx) + S.sq(p.y - qy);
     if (d < best) best = d;
   }
-  return best <= 110; // tube radius ~10.5
+  return best <= 72; // tube radius ~8.5
 }
 
 // uniform scale: profile is authored at 45%, boost to a true half of 73.5 cm
@@ -67,7 +75,7 @@ module.exports = {
       'arches, each anchored to the shoulder and the neck. Flat silver throughout, like the silver-plated original, finished ' +
       'smooth with tile caps and 45° slopes.',
   },
-  grid: { W: 36, D: 20, H: 41 },
+  grid: { W: 40, D: 20, H: 45 },
   colors: {
     v: { hex: '#A3A9AD', name: 'Flat Silver' },
   },

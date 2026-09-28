@@ -85,6 +85,52 @@ function wedgeGeo(wm, dm, h) {
   g.computeVertexNormals();
   return g;
 }
+// inverted wedge: full top, underside slopes up toward +z
+function invWedgeGeo(wm, dm, h) {
+  const hw = wm / 2, hd = dm / 2;
+  const v = (a, b, c) => [a, b, c];
+  const b0 = v(-hw, 0, -hd), b1 = v(hw, 0, -hd);
+  const t0 = v(-hw, h, -hd), t1 = v(hw, h, -hd), t2 = v(hw, h, hd), t3 = v(-hw, h, hd);
+  const tris = [
+    t0, t1, t2, t0, t2, t3,        // top
+    b0, t1, b1, b0, t0, t1,        // back (z-)
+    b0, b1, t2, b0, t2, t3,        // sloped underside
+    b0, t3, t0,                    // left side
+    b1, t1, t2,                    // right side
+  ];
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(tris.flat()), 3));
+  g.computeVertexNormals();
+  return g;
+}
+// curved slope: S-curve profile from full height at -z to 0 at +z
+function curvedGeo(wm, dm, h) {
+  const hw = wm / 2, hd = dm / 2, N = 6;
+  const prof = [];
+  for (let i = 0; i <= N; i++) {
+    const t = i / N;
+    prof.push([-hd + dm * t, h * (1 - t * t * (3 - 2 * t))]);
+  }
+  const tris = [];
+  const quad = (a, b, c, d) => tris.push(a, b, c, a, c, d);
+  for (let i = 0; i < N; i++) {
+    const [z0, y0] = prof[i], [z1, y1] = prof[i + 1];
+    quad([-hw, y0, z0], [hw, y0, z0], [hw, y1, z1], [-hw, y1, z1]); // curved top
+  }
+  quad([-hw, 0, hd], [hw, 0, hd], [hw, 0, -hd], [-hw, 0, -hd]);     // bottom
+  quad([-hw, 0, -hd], [hw, 0, -hd], [hw, h, -hd], [-hw, h, -hd]);   // back
+  for (const sx of [-1, 1]) {                                        // side fans
+    for (let i = 0; i < N; i++) {
+      const [z0, y0] = prof[i], [z1, y1] = prof[i + 1];
+      const a = [sx * hw, 0, -hd], b = [sx * hw, y0, z0], c = [sx * hw, y1, z1];
+      if (sx < 0) tris.push(a, b, c); else tris.push(a, c, b);
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(tris.flat()), 3));
+  g.computeVertexNormals();
+  return g;
+}
 const DIR_ROT = { S: 0, E: Math.PI / 2, N: Math.PI, W: -Math.PI / 2 };
 
 const brickGeoCache = new Map();
@@ -92,11 +138,12 @@ function brickGeo(b) {
   const key = [b.x, b.y, b.z, b.w, b.d, b.k || 'b', b.dir || '', JSON.stringify(b.caps || 0)].join(',');
   if (brickGeoCache.has(key)) return brickGeoCache.get(key);
   const geoms = [];
-  if (b.k === 's') {
-    // slope: wedge is square along the facing direction (depth), runs across
+  if (b.k) {
+    // sloped part: depth follows the facing direction, run is perpendicular
     const alongX = b.dir === 'S' || b.dir === 'N'; // width axis when facing z
     const wm = (alongX ? b.w : b.d) * S - GAP;     // run length
-    const g = wedgeGeo(wm, S - GAP, SH - GAP);
+    const dm = (b.k === 'c' ? 2 : 1) * S - GAP;    // depth
+    const g = (b.k === 'c' ? curvedGeo : b.k === 'i' ? invWedgeGeo : wedgeGeo)(wm, dm, SH - GAP);
     g.rotateY(DIR_ROT[b.dir]);
     g.translate(wx(b), b.y * SH, wz(b));
     geoms.push(g);
@@ -126,17 +173,24 @@ function brickGeo(b) {
 function brickEdgePts(b, out) {
   const hh = (SH - GAP) / 2;
   const cx = wx(b), cy = b.y * SH + hh, cz = wz(b);
-  if (b.k === 's') {
-    // wedge edges in local frame (down toward +z), then rotate
+  if (b.k) {
+    // sloped-part edges in local frame (down toward +z), then rotate
     const alongX = b.dir === 'S' || b.dir === 'N';
-    const hw = ((alongX ? b.w : b.d) * S - GAP) / 2, hd = (S - GAP) / 2, h = SH - GAP;
+    const hw = ((alongX ? b.w : b.d) * S - GAP) / 2, h = SH - GAP;
+    const hd = ((b.k === 'c' ? 2 : 1) * S - GAP) / 2;
     const pts = [
       [-hw, 0, -hd, hw, 0, -hd], [hw, 0, -hd, hw, 0, hd],
       [hw, 0, hd, -hw, 0, hd], [-hw, 0, hd, -hw, 0, -hd],
       [-hw, h, -hd, hw, h, -hd],
       [-hw, 0, -hd, -hw, h, -hd], [hw, 0, -hd, hw, h, -hd],
-      [-hw, h, -hd, -hw, 0, hd], [hw, h, -hd, hw, 0, hd],
     ];
+    if (b.k === 'i') {
+      pts.push([-hw, h, -hd, -hw, h, hd], [hw, h, -hd, hw, h, hd],
+        [-hw, h, hd, hw, h, hd],
+        [-hw, h, hd, -hw, 0, hd], [hw, h, hd, hw, 0, hd]);
+    } else {
+      pts.push([-hw, h, -hd, -hw, 0, hd], [hw, h, -hd, hw, 0, hd]);
+    }
     const rot = DIR_ROT[b.dir], cos = Math.cos(rot), sin = Math.sin(rot);
     for (const [x1, y1, z1, x2, y2, z2] of pts) {
       out.push(
@@ -347,10 +401,16 @@ function partIcon(w, d, hex, px, kind) {
   ctx.strokeStyle = dark ? 'rgba(150,160,175,.9)' : shade(hex, -0.55);
   ctx.lineWidth = 1;
   ctx.lineJoin = 'round';
-  if (kind === 's') {
+  if (kind === 's' || kind === 'c') {
     // wedge: full-height back (x=0 side), sloping to nothing at x=W
     face([P(0, Hm, 0), P(Wm, 0, 0), P(Wm, 0, Dm), P(0, Hm, Dm)], shade(hex, 0.14)); // slope face
     face([P(0, 0, Dm), P(Wm, 0, Dm), P(0, Hm, Dm)], hex);                            // front triangle
+    return cnv;
+  }
+  if (kind === 'i') {
+    // inverted: full top, notched underside
+    face([P(0, Hm, 0), P(Wm, Hm, 0), P(Wm, Hm, Dm), P(0, Hm, Dm)], shade(hex, 0.22));
+    face([P(0, 0, Dm), P(Wm, Hm, Dm), P(0, Hm, Dm)], hex);
     return cnv;
   }
   face([P(0, Hm, 0), P(Wm, Hm, 0), P(Wm, Hm, Dm), P(0, Hm, Dm)], shade(hex, 0.22));   // top
@@ -373,7 +433,7 @@ function partIcon(w, d, hex, px, kind) {
   }
   return cnv;
 }
-const KIND_LABEL = { b: 'Brick', s: 'Slope', t: 'Tile' };
+const KIND_LABEL = { b: 'Brick', s: 'Slope', c: 'Curved slope', i: 'Inv. slope', t: 'Tile' };
 
 /* ---------- instructions ---------- */
 const buildView = makeView(document.getElementById('cv-build'),
@@ -392,7 +452,7 @@ function stepParts(bricks) {
     agg.set(key, (agg.get(key) || 0) + 1);
   };
   for (const b of bricks) {
-    add(b.k === 's' ? 's' : 'b', b.w, b.d, b.c);
+    add(b.k || 'b', b.w, b.d, b.c);
     (b.caps || []).forEach(([, , w, d]) => add('t', w, d, b.c));
   }
   return agg;
@@ -445,10 +505,10 @@ setStep(1);
     groups[c].set(key, (groups[c].get(key) || 0) + 1);
   };
   for (const b of ALL) {
-    add(b.c, b.k === 's' ? 's' : 'b', b.w, b.d);
+    add(b.c, b.k || 'b', b.w, b.d);
     (b.caps || []).forEach(([, , w, d]) => add(b.c, 't', w, d));
   }
-  const kindOrder = { b: 0, s: 1, t: 2 };
+  const kindOrder = { b: 0, s: 1, c: 2, i: 3, t: 4 };
   const holder = document.getElementById('inventory');
   for (const [c, map] of Object.entries(groups)) {
     if (!map.size) continue;
