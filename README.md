@@ -10,8 +10,10 @@ and a full parts inventory.
 
 | Model | Spec | Bricks | Description |
 | --- | --- | --- | --- |
-| Brick Calico | `models/calico-cat.js` | 566 | Life-size sitting calico house cat |
-| Brick Shadow | `models/black-cat.js` | 350 | Life-size black cat sitting bolt upright, green eyes |
+| Brick Calico | `models/calico-cat.js` | ~1500 | Life-size sitting calico house cat |
+| Brick Shadow | `models/black-cat.js` | ~900 | Life-size black cat sitting bolt upright, green eyes |
+| Brick Ace | `models/tennis-kid.js` | ~600 | Young tennis player, BrickHeadz-style portrait head |
+| Big Ears | `models/ucl-trophy.js` | ~1600 | The European champions' cup at 1:2 scale |
 
 ## Build
 
@@ -31,13 +33,16 @@ models/<spec>.js ──► generate.js ──► dist/<slug>.json ──► asse
                      connectivity check
 ```
 
-- **Scale**: 1 stud = 8 mm, 1 brick height = 9.6 mm (real LEGO dimensions).
-- **Merge**: per layer, greedy largest-first from standard sizes (1×1 … 2×6), alternating
-  x/z bias between layers for interlock. The merge is *support-aware*: cells with no voxel
-  beneath them are first covered by bricks that also grab a supported cell, so steep walls
-  and overhangs stay stud-connected instead of floating.
-- **Verification**: BFS over stud connections from the ground; anything unreachable is
-  dropped and reported. A finished model prints `dropped (unconnected): 0`.
+- **Scale**: 1 stud = 8 mm; the engine works at **plate resolution** (3.2 mm vertical
+  steps), so curved silhouettes read smooth. Bricks (3 plates) fill phase-aligned
+  interiors; plates handle the surface transitions.
+- **Merge**: per plate layer, greedy largest-first from standard footprints (1×1 … 2×6),
+  alternating x/z bias for interlock; 45° slopes, 2-deep curved slopes and inverted
+  slopes are placed where the shape steps a full brick; every exposed stud gets a tile cap.
+- **Verification & repair**: BFS over stud connections from the ground. Floating
+  components trigger a repair loop that forces minimal plate bridges onto anchored
+  cells and re-merges; bridges that go stale are removed and blacklisted. Remaining
+  drops (rare 3.2 mm surface slivers) are reported.
 
 ## Writing a new model spec
 

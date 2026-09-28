@@ -6,7 +6,7 @@ const S = require('../lib/shapes');
 
 const tail = S.bezierTube({
   pts: [{ x: 4, z: -90 }, { x: 70, z: -86 }, { x: 74, z: 14 }, { x: 30, z: 70 }],
-  y: 9, r0: 9.5, r1: 6.5, yscale: 1.05,
+  y: 7.5, r0: 9.5, r1: 6.5, yscale: 1.05,
 });
 
 function ear(p, sx) {

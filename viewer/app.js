@@ -1,12 +1,15 @@
 /* ============ Brick model viewer (generic) ============ */
 const COLORS = MODEL.colors;
 const { W, D, H } = MODEL.grid;
-const S = 8, SH = 9.6, GAP = 0.4, CAPH = 3.0;
+const S = 8, GAP = 0.4, CAPH = 3.0;
+const UNIT = MODEL.grid.unit === 'plate' ? 3.2 : 9.6; // vertical mm per layer
+const hmm = b => (b.h || 1) * UNIT;                   // part height in mm
 const LAYERS = MODEL.layers;                 // sorted bottom-up
 const ALL = [];
 LAYERS.forEach(L => L.bricks.forEach(b => ALL.push({ ...b, y: L.y })));
 const TILES = ALL.reduce((s, b) => s + (b.caps ? b.caps.length : 0), 0);
-const EXT = Math.max(W * S, D * S, H * SH);  // model extent, drives camera + lights
+const TOPP = Math.max(...ALL.map(b => b.y + (b.h || 1))); // highest occupied plate
+const EXT = Math.max(W * S, D * S, H * UNIT);  // model extent, drives camera + lights
 
 /* build order: within each layer, serpentine front-to-back, ~3-5 bricks per step */
 const STEPS = []; // { bricks, layer }
@@ -38,7 +41,7 @@ ALL.forEach(b => {
 document.getElementById('facts').innerHTML = [
   `<span class="fact"><b>${ALL.length + TILES}</b> pieces</span>`,
   `<span class="fact"><b>${STEPS.length}</b> steps</span>`,
-  `<span class="fact"><b>${(H * 0.96).toFixed(0)}&nbsp;cm</b> tall${MODEL.meta.tallNote ? ' — ' + MODEL.meta.tallNote : ''}</span>`,
+  `<span class="fact"><b>${(TOPP * UNIT / 10).toFixed(0)}&nbsp;cm</b> tall${MODEL.meta.tallNote ? ' — ' + MODEL.meta.tallNote : ''}</span>`,
   `<span class="fact">footprint <b>${(W * 0.8).toFixed(1)} × ${(D * 0.8).toFixed(1)}&nbsp;cm</b></span>`,
 ].join('');
 document.getElementById('legend').innerHTML =
@@ -138,31 +141,32 @@ function brickGeo(b) {
   const key = [b.x, b.y, b.z, b.w, b.d, b.k || 'b', b.dir || '', JSON.stringify(b.caps || 0)].join(',');
   if (brickGeoCache.has(key)) return brickGeoCache.get(key);
   const geoms = [];
+  const bh = hmm(b);
   if (b.k) {
     // sloped part: depth follows the facing direction, run is perpendicular
     const alongX = b.dir === 'S' || b.dir === 'N'; // width axis when facing z
     const wm = (alongX ? b.w : b.d) * S - GAP;     // run length
     const dm = (b.k === 'c' ? 2 : 1) * S - GAP;    // depth
-    const g = (b.k === 'c' ? curvedGeo : b.k === 'i' ? invWedgeGeo : wedgeGeo)(wm, dm, SH - GAP);
+    const g = (b.k === 'c' ? curvedGeo : b.k === 'i' ? invWedgeGeo : wedgeGeo)(wm, dm, bh - GAP);
     g.rotateY(DIR_ROT[b.dir]);
-    g.translate(wx(b), b.y * SH, wz(b));
+    g.translate(wx(b), b.y * UNIT, wz(b));
     geoms.push(g);
   } else {
-    const box = new THREE.BoxGeometry(b.w * S - GAP, SH - GAP, b.d * S - GAP).toNonIndexed();
-    box.translate(wx(b), b.y * SH + (SH - GAP) / 2, wz(b));
+    const box = new THREE.BoxGeometry(b.w * S - GAP, bh - GAP, b.d * S - GAP).toNonIndexed();
+    box.translate(wx(b), b.y * UNIT + (bh - GAP) / 2, wz(b));
     geoms.push(box);
     // tile caps on exposed cells; studs only where another brick will sit
     const capped = new Set();
     (b.caps || []).forEach(([cx, cz, cw, cd]) => {
       for (let i = 0; i < cw; i++) for (let j = 0; j < cd; j++) capped.add((cx + i) + ',' + (cz + j));
       const cap = new THREE.BoxGeometry(cw * S - GAP, CAPH, cd * S - GAP).toNonIndexed();
-      cap.translate((cx + cw / 2 - W / 2) * S, b.y * SH + SH - GAP + CAPH / 2, (cz + cd / 2 - D / 2) * S);
+      cap.translate((cx + cw / 2 - W / 2) * S, b.y * UNIT + bh - GAP + CAPH / 2, (cz + cd / 2 - D / 2) * S);
       geoms.push(cap);
     });
     for (let i = 0; i < b.w; i++) for (let j = 0; j < b.d; j++) {
       if (capped.has((b.x + i) + ',' + (b.z + j))) continue;
       const st = new THREE.CylinderGeometry(2.4, 2.4, 1.8, 12).toNonIndexed();
-      st.translate((b.x + i + 0.5 - W / 2) * S, b.y * SH + SH - GAP + 0.9, (b.z + j + 0.5 - D / 2) * S);
+      st.translate((b.x + i + 0.5 - W / 2) * S, b.y * UNIT + bh - GAP + 0.9, (b.z + j + 0.5 - D / 2) * S);
       geoms.push(st);
     }
   }
@@ -171,12 +175,12 @@ function brickGeo(b) {
   return g;
 }
 function brickEdgePts(b, out) {
-  const hh = (SH - GAP) / 2;
-  const cx = wx(b), cy = b.y * SH + hh, cz = wz(b);
+  const hh = (hmm(b) - GAP) / 2;
+  const cx = wx(b), cy = b.y * UNIT + hh, cz = wz(b);
   if (b.k) {
     // sloped-part edges in local frame (down toward +z), then rotate
     const alongX = b.dir === 'S' || b.dir === 'N';
-    const hw = ((alongX ? b.w : b.d) * S - GAP) / 2, h = SH - GAP;
+    const hw = ((alongX ? b.w : b.d) * S - GAP) / 2, h = hmm(b) - GAP;
     const hd = ((b.k === 'c' ? 2 : 1) * S - GAP) / 2;
     const pts = [
       [-hw, 0, -hd, hw, 0, -hd], [hw, 0, -hd, hw, 0, hd],
@@ -194,8 +198,8 @@ function brickEdgePts(b, out) {
     const rot = DIR_ROT[b.dir], cos = Math.cos(rot), sin = Math.sin(rot);
     for (const [x1, y1, z1, x2, y2, z2] of pts) {
       out.push(
-        cx + x1 * cos + z1 * sin, b.y * SH + y1, cz - x1 * sin + z1 * cos,
-        cx + x2 * cos + z2 * sin, b.y * SH + y2, cz - x2 * sin + z2 * cos);
+        cx + x1 * cos + z1 * sin, b.y * UNIT + y1, cz - x1 * sin + z1 * cos,
+        cx + x2 * cos + z2 * sin, b.y * UNIT + y2, cz - x2 * sin + z2 * cos);
     }
     return;
   }
@@ -282,7 +286,7 @@ function makeView(canvas, opts) {
   scene.add(ground);
 
   let content = null;
-  const target = new THREE.Vector3(0, H * SH * 0.45, 0);
+  const target = new THREE.Vector3(0, H * UNIT * 0.45, 0);
   const st = { theta: opts.theta, phi: opts.phi, dist: EXT * opts.dist, auto: opts.auto && !reduceMotion };
 
   function applyCam() {
@@ -382,7 +386,8 @@ function partIcon(w, d, hex, px, kind) {
   const cnv = document.createElement('canvas');
   const dpr = Math.min(devicePixelRatio, 2);
   const Wm = w * 8, Dm = d * 8;
-  const Hm = kind === 't' ? 3.2 : 9.6, STH = kind === 'b' ? 1.8 : 0;
+  const Hm = (kind === 't' || kind === 'p') ? 3.2 : 9.6;
+  const STH = (kind === 'b' || kind === 'p') ? 1.8 : 0;
   const spanX = (Wm + Dm) * 0.866, spanY = (Wm + Dm) * 0.5 + Hm + STH + 1;
   const k = px / Math.max(spanX, spanY * 1.35);
   const cw = Math.ceil(spanX * k) + 8, ch = Math.ceil(spanY * k) + 8;
@@ -416,7 +421,7 @@ function partIcon(w, d, hex, px, kind) {
   face([P(0, Hm, 0), P(Wm, Hm, 0), P(Wm, Hm, Dm), P(0, Hm, Dm)], shade(hex, 0.22));   // top
   face([P(0, 0, Dm), P(Wm, 0, Dm), P(Wm, Hm, Dm), P(0, Hm, Dm)], hex);                 // front
   face([P(Wm, 0, 0), P(Wm, 0, Dm), P(Wm, Hm, Dm), P(Wm, Hm, 0)], shade(hex, -0.18));   // right
-  if (kind === 'b') {
+  if (kind === 'b' || kind === 'p') {
     const studs = [];
     for (let i = 0; i < w; i++) for (let j = 0; j < d; j++) studs.push([(i + 0.5) * 8, (j + 0.5) * 8]);
     studs.sort((a, b) => (a[0] + a[1]) - (b[0] + b[1]));
@@ -433,7 +438,8 @@ function partIcon(w, d, hex, px, kind) {
   }
   return cnv;
 }
-const KIND_LABEL = { b: 'Brick', s: 'Slope', c: 'Curved slope', i: 'Inv. slope', t: 'Tile' };
+const KIND_LABEL = { b: 'Brick', p: 'Plate', s: 'Slope', c: 'Curved slope', i: 'Inv. slope', t: 'Tile' };
+const kindOf = b => b.k ? b.k : ((b.h || 3) === 1 ? 'p' : 'b');
 
 /* ---------- instructions ---------- */
 const buildView = makeView(document.getElementById('cv-build'),
@@ -452,7 +458,7 @@ function stepParts(bricks) {
     agg.set(key, (agg.get(key) || 0) + 1);
   };
   for (const b of bricks) {
-    add(b.k || 'b', b.w, b.d, b.c);
+    add(kindOf(b), b.w, b.d, b.c);
     (b.caps || []).forEach(([, , w, d]) => add('t', w, d, b.c));
   }
   return agg;
@@ -505,10 +511,10 @@ setStep(1);
     groups[c].set(key, (groups[c].get(key) || 0) + 1);
   };
   for (const b of ALL) {
-    add(b.c, b.k || 'b', b.w, b.d);
+    add(b.c, kindOf(b), b.w, b.d);
     (b.caps || []).forEach(([, , w, d]) => add(b.c, 't', w, d));
   }
-  const kindOrder = { b: 0, s: 1, c: 2, i: 3, t: 4 };
+  const kindOrder = { b: 0, p: 1, s: 2, c: 3, i: 4, t: 5 };
   const holder = document.getElementById('inventory');
   for (const [c, map] of Object.entries(groups)) {
     if (!map.size) continue;
