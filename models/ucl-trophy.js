@@ -73,11 +73,15 @@ module.exports = {
       'Proportions follow the original: an egg-shaped bowl widest just below the ' +
       'shoulder and clearly wider than the flared mouth, a ringed stem on a round ' +
       'plinth, and the two blade handles hugging the cup before curling in at the ' +
-      'top. Flat silver throughout, finished smooth with tile caps and slopes.',
+      'top. Flat silver with the front engraving — the round emblem and the two ' +
+      'inscription lines — picked out in dark stone grey, and a pearl-gold bowl ' +
+      'interior. Finished smooth with tile caps and slopes.',
   },
   grid: { W: 32, D: 20, H: 40 },
   colors: {
     v: { hex: '#A3A9AD', name: 'Flat Silver' },
+    e: { hex: '#6D7075', name: 'Dark Stone Grey' },
+    g: { hex: '#D4A537', name: 'Pearl Gold' },
   },
 
   inShape(p) {
@@ -85,5 +89,26 @@ module.exports = {
     return inBody(p) || inHandle(p);
   },
 
-  colorAt() { return 'v'; },
+  colorAt(p) {
+    const r = rAt(p.y);
+    if (r > 0) {
+      const dd = Math.hypot(p.x, p.z);
+      // gold interior: the mouth's inner wall ring and the cavity floor
+      if (p.y >= 310 && dd < r - 6) return 'g';
+      if (p.y >= 300 && p.y < 310 && dd < rAt(312) - 10) return 'g';
+      // engraving on the front face of the bowl (outer shell, z toward viewer)
+      if (p.z > 0 && dd > r - 9) {
+        // round emblem above the inscription
+        if (S.sq(p.x) + S.sq(p.y - 248) <= 121) return 'e';
+        // line 1 — word-length dashes: COUPE DES CLUBS CHAMPIONS
+        if (p.y >= 210 && p.y < 220) {
+          const W1 = [[-56, -38], [-30, -20], [-12, 4], [12, 44]];
+          for (const [a, b] of W1) if (p.x >= a && p.x <= b) return 'e';
+        }
+        // line 2 — EUROPÉENS, centered
+        if (p.y >= 195 && p.y < 204 && Math.abs(p.x) <= 24) return 'e';
+      }
+    }
+    return 'v';
+  },
 };
