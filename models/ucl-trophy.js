@@ -1,20 +1,23 @@
-// Big Ears — the European champions' cup at roughly 1:2 scale, all pearl
-// gold. A surface of revolution (plinth, stem, tapering cup, neck, flared
-// rim with a hollow mouth) plus the two signature oversized loop handles,
-// built as brick arches. x right, y up, z toward viewer.
+// Big Ears — the European champions' cup at 1:2 scale, flat silver.
+// Proportions measured off the reference photo: an egg-shaped bowl that is
+// widest at ~62% of the height (clearly wider than the mouth), a short
+// ringed stem on a round plinth, a modest flared mouth, and thin blade
+// handles that hug the cup, peak at the very top, and curl back into the
+// rim. x right, y up, z toward viewer. All coordinates in final mm.
 
 const S = require('../lib/shapes');
 
-// cup profile: piecewise-linear radius by height (mm)
+// cup profile: piecewise-linear radius by height (mm); total ~368mm to handle tips
 const PROFILE = [
-  [0, 42], [10, 42], [13, 34], [20, 36],      // stepped foot discs
-  [24, 24], [42, 14], [52, 14],               // short stem
-  [62, 20], [110, 40], [160, 55], [205, 64],  // broad bowl to the shoulder
-  [232, 58], [252, 38], [272, 39],            // hard waist into the neck
-  [282, 46], [296, 59], [312, 59],            // wide flared mouth
+  [0, 53], [26, 53], [30, 40], [34, 24],       // plinth discs
+  [42, 20], [48, 27], [54, 20],                // short stem with a ring knob
+  [60, 24], [90, 42], [130, 57], [170, 67],    // egg bowl swelling upward
+  [205, 72], [235, 71],                        // widest at ~62% height
+  [262, 60], [285, 48], [300, 49],             // long curve into the neck
+  [308, 54], [318, 58], [324, 58],             // modest flared mouth (< shoulder)
 ];
 function rAt(y) {
-  if (y < 0 || y > 312) return -1;
+  if (y < 0 || y > 324) return -1;
   for (let i = 1; i < PROFILE.length; i++) {
     const [y0, r0] = PROFILE[i - 1], [y1, r1] = PROFILE[i];
     if (y <= y1) return r0 + (r1 - r0) * (y - y0) / (y1 - y0);
@@ -26,17 +29,17 @@ function inBody(p) {
   if (r < 0) return false;
   const d = Math.hypot(p.x, p.z);
   if (d > r) return false;
-  if (p.y >= 288 && d < r - 14) return false; // hollow mouth
+  if (p.y >= 310 && d < r - 14) return false; // hollow mouth
   return true;
 }
 
-// handle: thin blade with the classic S-curl, two bezier segments in the
-// x-y plane, mirrored to both sides. Segment 1 springs from mid-bowl, sweeps
-// far out and rises well above the rim; segment 2 is the tight inward curl
-// that hooks back down to land on the rim's edge.
+// handles: thin blades, two bezier segments in the x-y plane, mirrored.
+// Segment 1 springs from the bowl flank at ~42% height, stays close to the
+// body, and rises to the trophy's highest point; segment 2 is the tight
+// inward curl that hooks back down onto the rim's edge.
 const HSEGS = [
-  [[52, 148], [128, 215], [142, 350], [86, 368]],  // main sweep
-  [[86, 368], [40, 378], [38, 305], [56, 288]],    // top curl into the rim
+  [[58, 150], [120, 210], [118, 350], [72, 362]],  // main sweep, hugging the bowl
+  [[72, 362], [30, 370], [30, 300], [50, 296]],    // top curl into the rim
 ];
 const HSAMPLES = [];
 for (const HP of HSEGS) {
@@ -56,11 +59,8 @@ function inHandle(p) {
     const d = S.sq(ax - qx) + S.sq(p.y - qy);
     if (d < best) best = d;
   }
-  return best <= 72; // tube radius ~8.5
+  return best <= 68; // tube radius ~8.2
 }
-
-// uniform scale: profile is authored at 45%, boost to a true half of 73.5 cm
-const SC = 1.115;
 
 module.exports = {
   meta: {
@@ -69,21 +69,20 @@ module.exports = {
     subtitle: 'The big-eared European champions’ cup in flat silver, handles and all.',
     tallNote: '1:2 scale',
     favicon: '🏆',
-    footer: 'The famous silhouette at half scale — about 37 cm tall — half the real trophy. The cup is a ' +
-      'surface of revolution: plinth, stem, a bowl that swells to its shoulder, then a waisted ' +
-      'neck and flared rim with a hollow mouth. The two oversized handles are true brick ' +
-      'arches, each anchored to the shoulder and the neck. Flat silver throughout, like the silver-plated original, finished ' +
-      'smooth with tile caps and 45° slopes.',
+    footer: 'The famous silhouette at half scale — about 37 cm to the handle tips. ' +
+      'Proportions follow the original: an egg-shaped bowl widest just below the ' +
+      'shoulder and clearly wider than the flared mouth, a ringed stem on a round ' +
+      'plinth, and the two blade handles hugging the cup before curling in at the ' +
+      'top. Flat silver throughout, finished smooth with tile caps and slopes.',
   },
-  grid: { W: 40, D: 20, H: 45 },
+  grid: { W: 32, D: 20, H: 40 },
   colors: {
     v: { hex: '#A3A9AD', name: 'Flat Silver' },
   },
 
   inShape(p) {
     if (p.y < 0) return false;
-    const q = { x: p.x / SC, y: p.y / SC, z: p.z / SC };
-    return inBody(q) || inHandle(q);
+    return inBody(p) || inHandle(p);
   },
 
   colorAt() { return 'v'; },
