@@ -422,9 +422,6 @@ function brickGeo(b) {
     const capped = new Set();
     (b.caps || []).forEach(([cx, cz, cw, cd]) => {
       for (let i = 0; i < cw; i++) for (let j = 0; j < cd; j++) capped.add((cx + i) + ',' + (cz + j));
-      const cap = new THREE.BoxGeometry(cw * S - GAP, CAPH, cd * S - GAP).toNonIndexed();
-      cap.translate((cx + cw / 2 - W / 2) * S, b.y * UNIT + bh - GAP + CAPH / 2, (cz + cd / 2 - D / 2) * S);
-      geoms.push(cap);
     });
     for (let i = 0; i < b.w; i++) for (let j = 0; j < b.d; j++) {
       if (capped.has((b.x + i) + ',' + (b.z + j))) continue;
@@ -506,8 +503,9 @@ function buildGroup(bricks, highlightSet) {
     mesh.receiveShadow = true;
     group.add(mesh);
   }
-  if (edgeDark.length) group.add(linesFrom(edgeDark, 0x0c1118, 0.28));
-  if (edgeLight.length) group.add(linesFrom(edgeLight, 0x9aa6b5, 0.30));
+  const seam = ALL.length > 800 ? 0.13 : 0.28;
+  if (edgeDark.length) group.add(linesFrom(edgeDark, 0x0c1118, seam));
+  if (edgeLight.length) group.add(linesFrom(edgeLight, 0x9aa6b5, seam + 0.02));
   if (hiPts.length) {
     const ls = linesFrom(hiPts, 0xffb400, 0.95);
     ls.renderOrder = 2;
