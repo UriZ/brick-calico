@@ -62,33 +62,6 @@ function inHandle(p) {
   return best <= 68; // tube radius ~8.2
 }
 
-// --- Champions League mark on the bowl front: a bold five-pointed star on a
-// white ball. A full ring-of-stars starball fragments into noise at nine studs
-// across, so the mark is reduced to its readable core, the way brick sets do.
-const LOGO = { cy: 242, R: 38 };
-function starPts(cx, cy, R, rot, ratio) {
-  const pts = [];
-  for (let i = 0; i < 10; i++) {
-    const rr = i % 2 === 0 ? R : R * ratio;
-    const a = rot + i * Math.PI / 5;
-    pts.push([cx + Math.cos(a) * rr, cy + Math.sin(a) * rr]);
-  }
-  return pts;
-}
-function inPoly(x, y, pts) {
-  let inside = false;
-  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
-    const [xi, yi] = pts[i], [xj, yj] = pts[j];
-    if ((yi > y) !== (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) inside = !inside;
-  }
-  return inside;
-}
-const STAR = starPts(0, LOGO.cy, LOGO.R * 0.82, Math.PI / 2, 0.42);
-function starball(x, y) {
-  if (Math.hypot(x, y - LOGO.cy) > LOGO.R) return null;
-  return inPoly(x, y, STAR) ? 'e' : 'w';
-}
-
 module.exports = {
   meta: {
     slug: 'ucl-trophy',
@@ -100,17 +73,15 @@ module.exports = {
       'Proportions follow the original: an egg-shaped bowl widest just below the ' +
       'shoulder and clearly wider than the flared mouth, a ringed stem on a round ' +
       'plinth, and the two blade handles hugging the cup before curling in at the ' +
-      'top. Flat silver, with the Champions League starball on the bowl front above ' +
-      'the two inscription lines and a pearl-gold bowl interior. Every exposed ' +
-      'surface is capped with a smooth tile — studs appear only where the next ' +
-      'layer locks on — so the shell reads as polished metal rather than studs.',
+      'top. Flat silver with the front engraving — the round emblem and the two ' +
+      'inscription lines — picked out in dark stone grey, and a pearl-gold bowl ' +
+      'interior. Finished smooth with tile caps and slopes.',
   },
   grid: { W: 32, D: 20, H: 40 },
   colors: {
     v: { hex: '#A3A9AD', name: 'Flat Silver' },
     e: { hex: '#6D7075', name: 'Dark Stone Grey' },
     g: { hex: '#D4A537', name: 'Pearl Gold' },
-    w: { hex: '#F2F0EB', name: 'White' },
   },
 
   inShape(p) {
@@ -127,16 +98,15 @@ module.exports = {
       if (p.y >= 300 && p.y < 310 && dd < rAt(312) - 10) return 'g';
       // engraving on the front face of the bowl (outer shell, z toward viewer)
       if (p.z > 0 && dd > r - 9) {
-        // Champions League starball
-        const lg = starball(p.x, p.y);
-        if (lg) return lg;
+        // round emblem above the inscription
+        if (S.sq(p.x) + S.sq(p.y - 248) <= 121) return 'e';
         // line 1 — word-length dashes: COUPE DES CLUBS CHAMPIONS
-        if (p.y >= 186 && p.y < 195) {
+        if (p.y >= 210 && p.y < 220) {
           const W1 = [[-56, -38], [-30, -20], [-12, 4], [12, 44]];
           for (const [a, b] of W1) if (p.x >= a && p.x <= b) return 'e';
         }
         // line 2 — EUROPÉENS, centered
-        if (p.y >= 171 && p.y < 180 && Math.abs(p.x) <= 24) return 'e';
+        if (p.y >= 195 && p.y < 204 && Math.abs(p.x) <= 24) return 'e';
       }
     }
     return 'v';
