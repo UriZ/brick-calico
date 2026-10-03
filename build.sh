@@ -17,3 +17,4 @@ fi
 node generate.js "$1" "$2"
 SLUG=$(node -p "require('./$1').meta.slug")
 node assemble.js "dist/$SLUG.json"
+node manifest.js "dist/$SLUG.json" | tail -3

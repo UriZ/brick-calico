@@ -18,7 +18,7 @@ and a full parts inventory.
 ## Build
 
 ```sh
-./build.sh models/black-cat.js            # → dist/black-cat.json + dist/black-cat.html
+./build.sh models/black-cat.js            # → dist/black-cat.{json,html} + parts manifest
 ./build.sh models/black-cat.js --preview  # also print ASCII silhouettes
 ```
 
@@ -43,6 +43,25 @@ models/<spec>.js ──► generate.js ──► dist/<slug>.json ──► asse
   components trigger a repair loop that forces minimal plate bridges onto anchored
   cells and re-merges; bridges that go stale are removed and blacklisted. Remaining
   drops (rare 3.2 mm surface slivers) are reported.
+
+## Ordering the parts
+
+Every build also writes an orderable manifest next to the model:
+
+| File | Use |
+| --- | --- |
+| `dist/<slug>-wanted.xml` | BrickLink Wanted List — upload at bricklink.com → **Want** → **Upload (XML)**, then price it against sellers |
+| `dist/<slug>-parts.csv` | the same list as a spreadsheet, with BrickLink part and colour ids |
+
+`manifest.js` holds the catalogue mapping. It **throws rather than guesses** when a
+part or colour has no verified BrickLink id, so any manifest that generates is one
+you can actually order. Two deliberate substitutions are flagged in the CSV notes:
+
+- **Wide tile caps** are ordered as 1×N tiles (a 2×6 cap is two 1×6 tiles) — identical
+  coverage, and it keeps the list on well-established tile numbers.
+- **Sloped parts** map to `3040` / `3665` / `11477`. A brick-height wedge one stud deep
+  is not a stock element, so the 45° substitutes run over two studs where the model's
+  wedge runs over one; those few cells sit slightly shallower than rendered.
 
 ## Writing a new model spec
 
